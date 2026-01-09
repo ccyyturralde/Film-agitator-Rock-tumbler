@@ -13,10 +13,13 @@ const char* ap_password = "agitate123";
 #define STEP_PIN 26        // Step pin for TMC2209 (STEP on left side)
 #define DIR_PIN 25         // Direction pin for TMC2209 (DIR on left side)
 #define ENABLE_PIN 33      // Enable pin for TMC2209 (EN on left side)
-#define PDN_UART_PIN 32    // PDN_UART pin - set LOW to enable UART mode (optional, some boards auto-detect)
-// Serial2 pins for TMC2209 UART - adjust these to match your ESP32 board
-#define UART_RX_PIN 4      // RX2 pin (commonly GPIO 4 on ESP32 dev boards)
-#define UART_TX_PIN 2      // TX2 pin (commonly GPIO 2 on ESP32 dev boards)
+#define PDN_PIN 32         // PDN pin - set LOW to enable UART mode (if your board requires it)
+// Serial2 pins for TMC2209 UART
+// Use RX2 and TX2 pins from your ESP32-DevKitC board
+// On ESP32-DevKitC: RX2 = GPIO 16, TX2 = GPIO 17
+// Connect RX2 and TX2 to the USART pin on TMC2209 (half-duplex UART)
+#define UART_RX_PIN 16     // RX2 pin (GPIO 16 on ESP32-DevKitC) → TMC2209 USART pin
+#define UART_TX_PIN 17     // TX2 pin (GPIO 17 on ESP32-DevKitC) → TMC2209 USART pin via 1kΩ resistor
 #define DRIVER_ADDRESS 0b00 // TMC2209 Driver address (0-3)
 
 // Motor parameters for NEMA 17
@@ -95,9 +98,11 @@ void setup() {
   pinMode(STEP_PIN, OUTPUT);
   pinMode(DIR_PIN, OUTPUT);
   pinMode(ENABLE_PIN, OUTPUT);
-  pinMode(PDN_UART_PIN, OUTPUT);
+  // PDN pin - set LOW to enable UART mode (if your board requires software control)
+  // Many boards have a jumper for this - if so, you can ignore GPIO 32
+  pinMode(PDN_PIN, OUTPUT);
   digitalWrite(ENABLE_PIN, HIGH); // Disable driver initially
-  digitalWrite(PDN_UART_PIN, LOW); // Enable UART mode (LOW = UART enabled)
+  digitalWrite(PDN_PIN, LOW); // Enable UART mode (LOW = UART enabled) - only if using GPIO control
   
   // Setup motor driver
   setupMotor();

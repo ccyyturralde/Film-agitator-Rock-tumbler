@@ -20,10 +20,10 @@ A mobile-friendly web application for controlling a stepper motor-powered film a
 | GPIO 26   | STEP        | Step signal (STEP pin on left side) |
 | GPIO 25   | DIR         | Direction signal (DIR pin on left side) |
 | GPIO 33   | ENABLE      | Enable/Disable driver (EN pin on left side) |
-| GPIO 32   | PDN_UART    | UART mode enable (PDN pin on left side - set LOW for UART mode) |
-| GPIO 4    | UART_RX2    | Serial2 RX (connects to PDN_UART pin for half-duplex, or separate RX if board has it) |
-| GPIO 2    | UART_TX2    | Serial2 TX (connects to PDN_UART pin for half-duplex, or separate TX if board has it) |
-|           |             | **Note:** If your board uses different Serial2 pins, update UART_RX_PIN and UART_TX_PIN in code |
+| GPIO 16   | RX2         | Serial2 RX → TMC2209 USART pin (half-duplex UART) |
+| GPIO 17   | TX2         | Serial2 TX → TMC2209 USART pin via 1kΩ resistor (half-duplex UART) |
+| GPIO 32   | (Optional)   | PDN pin control (only if not using jumper - set LOW to enable UART mode) |
+|           |             | **Note:** Connect RX2 and TX2 to the USART pin on TMC2209. PDN pin enables UART mode (many boards use a jumper) |
 | GND       | GND         | Common ground (connect to GND on right side) |
 | 3.3V      | VDD         | Logic power (VDD pin on right side - 3.3V) |
 
@@ -51,11 +51,26 @@ A mobile-friendly web application for controlling a stepper motor-powered film a
 
 **Note:** If motor runs in wrong direction, swap one coil pair (e.g., swap 1A and 1B).
 
+### Wiring Method
+
+**You can use Dupont connectors directly - no breadboard needed!**
+
+All connections can be made with Dupont jumper wires:
+- Direct pin-to-pin connections (STEP, DIR, EN, etc.)
+- For the 1kΩ resistor between TX2 and USART: Use a resistor with Dupont connectors, or check if your TMC2209 board already includes this resistor
+- Power connections (12V, 3.3V, GND) can use Dupont connectors
+
+**Optional:** A small breadboard or perfboard can be helpful for:
+- Organizing the 1kΩ resistor connection
+- Creating a cleaner wiring layout
+- But it's not required - Dupont connectors work fine!
+
 ### TMC2209 Configuration Jumpers
 
-- **MS1, MS2, MS3:** Set for microstep configuration (hardware). In this project, we use UART for software control.
-- **PDN_UART:** Must be connected for UART mode (GPIO 16/17 on ESP32)
-- **VIO:** Can be connected to 3.3V if driver board requires it (most TMC2209 boards support 3.3V logic levels - check your board specs)
+- **MS1, MS2, MS3:** **NOT NEEDED** - We control microsteps via UART (set to 16 microsteps in software). Leave these pins unconnected or set to any state.
+- **PDN pin:** Must be set LOW for UART mode. Most boards have a jumper - set it to enable UART mode. If your board doesn't have a jumper, connect PDN pin to GND or use GPIO 32.
+- **USART pin:** This is the UART communication pin. Connect ESP32 RX2 and TX2 to the TMC2209 USART pin (half-duplex). Add a 1kΩ resistor between TX2 and USART pin.
+- **VIO/VDD:** Can be connected to 3.3V if driver board requires it (most TMC2209 boards support 3.3V logic levels - check your board specs)
 
 ## Software Setup
 
