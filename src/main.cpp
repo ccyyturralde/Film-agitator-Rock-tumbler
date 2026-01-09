@@ -1,6 +1,5 @@
 #include <WiFi.h>
 #include <WebServer.h>
-#include <SPIFFS.h>
 #include <TMCStepper.h>
 #include <HardwareSerial.h>
 #include <Preferences.h>
@@ -24,8 +23,8 @@ const char* ap_password = "agitate123";
 
 // Motor parameters for NEMA 17
 #define STEPS_PER_REV 200  // NEMA 17 has 200 steps per revolution
-#define MICROSTEPS 16      // 16 microsteps for smooth operation
-#define MAX_RPM 300        // Maximum RPM for high speed operation
+#define MICROSTEPS 1       // Using 1 in calculations (driver set to 0 for native mode)
+#define MAX_RPM 1200       // Maximum RPM for high speed operation
 
 // TMC2209 UART configuration
 #define R_SENSE 0.11f      // Match to your driver module (typical is 0.11)
@@ -79,10 +78,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   
-  // Initialize SPIFFS for web files
-  if (!SPIFFS.begin(true)) {
-    Serial.println("SPIFFS Mount Failed");
-  }
+  // Note: We're using embedded web content, no SPIFFS needed
   
   // Initialize Preferences for WiFi storage
   preferences.begin("wifi", false);
@@ -197,14 +193,11 @@ void setupMotor() {
   // Configure TMC2209 driver settings
   driver.begin();
   driver.toff(4);
-  driver.rms_current(800);
-  driver.microsteps(MICROSTEPS);
+  driver.rms_current(1200);  // Increased current for better torque at high speed
+  driver.microsteps(0);      // 0 = full steps (native full-stepping mode)
   driver.pwm_autoscale(true);
-  driver.en_spreadCycle(false);
+  driver.en_spreadCycle(true);  // Enable spreadCycle for high speed
   driver.TPOWERDOWN(128);
-  driver.semin(5);
-  driver.semax(2);
-  driver.sedn(0b01);
   
   Serial.println("Motor driver configured");
 }
@@ -269,12 +262,6 @@ void stopMotor() {
 }
 
 void handleRoot() {
-  File file = SPIFFS.open("/index.html", "r");
-  if (file) {
-    server.streamFile(file, "text/html");
-    file.close();
-    return;
-  }
   server.send(200, "text/html", getEmbeddedHTML());
 }
 
@@ -357,6 +344,30 @@ void handleAPI() {
       duration = server.arg("duration").toInt() * 1000; // Convert seconds to milliseconds
     }
     startMotor(rpm, duration);
+    server.send(200, "application/json", getStatusJSON());
+  }
+  else if (action == "updateSpeed") {
+    // Allow live RPM adjustment while motor is running
+    if (!server.hasArg("rpm")) {
+      server.send(400, "application/json", "{\"error\":\"Missing rpm parameter\"}");
+      return;
+    }
+    float rpm = server.arg("rpm").toFloat();
+    if (motorRunning) {
+      currentRPM = rpm;
+      // Recalculate step interval for new speed
+      if (rpm > 0) {
+        float stepsPerSecond = (rpm * STEPS_PER_REV * MICROSTEPS) / 60.0;
+        stepInterval = 1000000.0 / stepsPerSecond;
+        Serial.print("Speed updated to ");
+        Serial.print(rpm);
+        Serial.print(" RPM (");
+        Serial.print(stepsPerSecond);
+        Serial.print(" steps/sec, interval=");
+        Serial.print(stepInterval);
+        Serial.println("us)");
+      }
+    }
     server.send(200, "application/json", getStatusJSON());
   }
   else if (action == "stop") {
@@ -449,7 +460,7 @@ String getEmbeddedHTML() {
         </div>
         <div class="control-card">
             <label for="rpmSlider">Speed (RPM)</label>
-            <input type="range" id="rpmSlider" min="10" max="300" value="60" step="10">
+            <input type="range" id="rpmSlider" min="10" max="1200" value="100" step="10">
             <div class="rpm-display">
                 <span id="rpmValue">60</span> RPM
             </div>
@@ -498,7 +509,7 @@ const stopBtn=document.getElementById('stopBtn');
 const timeControlCheck=document.getElementById('timeControlCheck');
 const timeControlGroup=document.getElementById('timeControlGroup');
 const durationInput=document.getElementById('durationInput');
-let currentRPM=60;
+let currentRPM=100;
 let isRunning=false;
 let direction='forward';
 let statusCheckInterval=null;
@@ -541,11 +552,12 @@ async function updateStatus(){
             dirForwardBtn.classList.remove('active');
             dirReverseBtn.classList.add('active');
         }
-        if(isRunning&&data.rpm>0){
-            currentRPM=data.rpm;
-            rpmSlider.value=currentRPM;
-            rpmValue.textContent=Math.round(currentRPM);
-        }
+        // Don't update slider while running - allow live adjustments
+        // if(isRunning&&data.rpm>0){
+        //     currentRPM=data.rpm;
+        //     rpmSlider.value=currentRPM;
+        //     rpmValue.textContent=Math.round(currentRPM);
+        // }
     }catch(error){
         console.error('Error updating status:',error);
         statusEl.textContent='Error';
@@ -590,6 +602,19 @@ async function stopMotor(){
     }catch(error){
         console.error('Error stopping motor:',error);
         alert('Error stopping motor. Check connection.');
+    }
+}
+async function updateSpeed(rpm){
+    try{
+        const formData=new URLSearchParams();
+        formData.append('action','updateSpeed');
+        formData.append('rpm',rpm.toString());
+        const response=await fetch(`${API_BASE}`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:formData.toString()});
+        if(response.ok){
+            console.log('Speed updated to',rpm,'RPM');
+        }
+    }catch(error){
+        console.error('Error updating speed:',error);
     }
 }
 async function setDirection(dir){
@@ -885,12 +910,21 @@ const dirForwardBtn=document.getElementById('dirForward');
 const dirReverseBtn=document.getElementById('dirReverse');
 const startBtn=document.getElementById('startBtn');
 const stopBtn=document.getElementById('stopBtn');
-let currentRPM=60;
+let currentRPM=100;
 let isRunning=false;
 let direction='forward';
 let statusCheckInterval=null;
+let rpmUpdateTimeout=null;
 document.addEventListener('DOMContentLoaded',()=>{
-    rpmSlider.addEventListener('input',(e)=>{currentRPM=parseInt(e.target.value);rpmValue.textContent=currentRPM});
+    rpmSlider.addEventListener('input',(e)=>{
+        currentRPM=parseInt(e.target.value);
+        rpmValue.textContent=currentRPM;
+        // Send live RPM update if motor is running
+        if(isRunning){
+            clearTimeout(rpmUpdateTimeout);
+            rpmUpdateTimeout=setTimeout(()=>{updateSpeed(currentRPM)},200);
+        }
+    });
     dirForwardBtn.addEventListener('click',()=>{setDirection('forward')});
     dirReverseBtn.addEventListener('click',()=>{setDirection('reverse')});
     startBtn.addEventListener('click',()=>{startMotor(currentRPM)});
@@ -916,11 +950,12 @@ async function updateStatus(){
             dirForwardBtn.classList.remove('active');
             dirReverseBtn.classList.add('active');
         }
-        if(isRunning&&data.rpm>0){
-            currentRPM=data.rpm;
-            rpmSlider.value=currentRPM;
-            rpmValue.textContent=Math.round(currentRPM);
-        }
+        // Don't update slider while running - allow live adjustments
+        // if(isRunning&&data.rpm>0){
+        //     currentRPM=data.rpm;
+        //     rpmSlider.value=currentRPM;
+        //     rpmValue.textContent=Math.round(currentRPM);
+        // }
     }catch(error){
         console.error('Error updating status:',error);
         statusEl.textContent='Error';
@@ -962,6 +997,19 @@ async function stopMotor(){
     }catch(error){
         console.error('Error stopping motor:',error);
         alert('Error stopping motor. Check connection.');
+    }
+}
+async function updateSpeed(rpm){
+    try{
+        const formData=new URLSearchParams();
+        formData.append('action','updateSpeed');
+        formData.append('rpm',rpm.toString());
+        const response=await fetch(`${API_BASE}`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:formData.toString()});
+        if(response.ok){
+            console.log('Speed updated to',rpm,'RPM');
+        }
+    }catch(error){
+        console.error('Error updating speed:',error);
     }
 }
 async function setDirection(dir){

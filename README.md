@@ -20,10 +20,10 @@ A mobile-friendly web application for controlling a stepper motor-powered film a
 | GPIO 26   | STEP        | Step signal (STEP pin on left side) |
 | GPIO 25   | DIR         | Direction signal (DIR pin on left side) |
 | GPIO 33   | ENABLE      | Enable/Disable driver (EN pin on left side) |
-| GPIO 16   | RX2         | Serial2 RX → TMC2209 USART pin (half-duplex UART) |
-| GPIO 17   | TX2         | Serial2 TX → TMC2209 USART pin via 1kΩ resistor (half-duplex UART) |
+| GPIO 16   | RX2         | Serial2 RX → TMC2209 USART pin (via small breadboard/perfboard) |
+| GPIO 17   | TX2         | Serial2 TX → TMC2209 USART pin via 1kΩ resistor (via small breadboard/perfboard) |
 | GPIO 32   | (Optional)   | PDN pin control (only if not using jumper - set LOW to enable UART mode) |
-|           |             | **Note:** Connect RX2 and TX2 to the USART pin on TMC2209. PDN pin enables UART mode (many boards use a jumper) |
+|           |             | **Note:** Both RX2 and TX2 connect to the SINGLE USART pin on TMC2209. You need a small breadboard/perfboard to combine them. See wiring details below. |
 | GND       | GND         | Common ground (connect to GND on right side) |
 | 3.3V      | VDD         | Logic power (VDD pin on right side - 3.3V) |
 
@@ -51,25 +51,62 @@ A mobile-friendly web application for controlling a stepper motor-powered film a
 
 **Note:** If motor runs in wrong direction, swap one coil pair (e.g., swap 1A and 1B).
 
-### Wiring Method
+### UART Wiring - Crystal Clear Answer
 
-**You can use Dupont connectors directly - no breadboard needed!**
+**Your TMC2209 has these pins available: MS1, MS2, PDN, USART**
 
-All connections can be made with Dupont jumper wires:
-- Direct pin-to-pin connections (STEP, DIR, EN, etc.)
-- For the 1kΩ resistor between TX2 and USART: Use a resistor with Dupont connectors, or check if your TMC2209 board already includes this resistor
-- Power connections (12V, 3.3V, GND) can use Dupont connectors
+**Where ESP32 RX2 and TX2 connect:**
+- **ESP32 RX2 (GPIO 16) → TMC2209 USART pin** (direct connection)
+- **ESP32 TX2 (GPIO 17) → 1kΩ resistor → TMC2209 USART pin** (resistor inline)
 
-**Optional:** A small breadboard or perfboard can be helpful for:
-- Organizing the 1kΩ resistor connection
-- Creating a cleaner wiring layout
-- But it's not required - Dupont connectors work fine!
+**BOTH wires go to the SAME pin: the USART pin on TMC2209.**
+
+This is called half-duplex UART - one pin handles both transmit and receive.
+
+**MS1, MS2:** Not used (we configure microstepping via UART instead)  
+**PDN:** Not used if your board has a jumper to enable UART mode (most do)
+
+### The Problem: Two Wires, One Pin
+
+You cannot physically plug two Dupont connectors into one USART pin. You must combine the wires:
+
+**Options to combine the wires:**
+
+1. **Y-connector with Dupont (RECOMMENDED - compact & clean):**
+   - Take 3 Dupont wires (female-to-female)
+   - Cut one end off two of them (for ESP32 RX2 and TX2)
+   - Cut both ends off the third (for the Y junction)
+   - Solder a 1kΩ resistor inline on the TX2 wire
+   - Solder all three together: RX2 + TX2 (with resistor) + wire to USART
+   - Wrap the solder joint with heat shrink
+   - Result: Two Dupont connectors for ESP32, one for TMC2209 USART
+   ```
+   ESP32 RX2 ────────────┐
+                          ├─── → TMC2209 USART
+   ESP32 TX2 ──[1kΩ]─────┘
+   ```
+
+2. **Wire splice connector:**
+   - Use a small crimp/splice connector
+   - Join: TX2 (with resistor), RX2, and wire to USART
+
+3. **Tiny 3-way terminal block:**
+   - Screw terminals to join TX2, RX2, and USART wire
+   - About 1cm in size
+
+**All other connections use Dupont connectors directly:**
+- STEP, DIR, EN → Direct pin-to-pin
+- Power (12V, 3.3V, GND) → Direct connections
+- Motor coils → Direct to TMC2209
 
 ### TMC2209 Configuration Jumpers
 
 - **MS1, MS2, MS3:** **NOT NEEDED** - We control microsteps via UART (set to 16 microsteps in software). Leave these pins unconnected or set to any state.
 - **PDN pin:** Must be set LOW for UART mode. Most boards have a jumper - set it to enable UART mode. If your board doesn't have a jumper, connect PDN pin to GND or use GPIO 32.
-- **USART pin:** This is the UART communication pin. Connect ESP32 RX2 and TX2 to the TMC2209 USART pin (half-duplex). Add a 1kΩ resistor between TX2 and USART pin.
+- **USART pin:** Both ESP32 RX2 and TX2 connect to THIS pin (half-duplex UART)
+  - RX2 → USART (direct)
+  - TX2 → 1kΩ resistor → USART (same pin as RX2)
+  - You must combine the wires (solder/splice/terminal block) because two Dupont connectors won't fit in one pin
 - **VIO/VDD:** Can be connected to 3.3V if driver board requires it (most TMC2209 boards support 3.3V logic levels - check your board specs)
 
 ## Software Setup
