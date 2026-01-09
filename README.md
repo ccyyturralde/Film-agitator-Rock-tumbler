@@ -23,7 +23,7 @@ A mobile-friendly web application for controlling a stepper motor-powered film a
 | GPIO 16   | PDN_UART    | UART RX (for TMC2209 configuration) |
 | GPIO 17   | PDN_UART    | UART TX (for TMC2209 configuration) |
 | GND       | GND         | Common ground |
-| 5V        | VIO         | Logic power (if needed, some boards have this) |
+| 3.3V      | VIO         | Logic power (3.3V - connect if your TMC2209 board requires external VIO) |
 
 ### Power Connections
 
@@ -53,7 +53,7 @@ A mobile-friendly web application for controlling a stepper motor-powered film a
 
 - **MS1, MS2, MS3:** Set for microstep configuration (hardware). In this project, we use UART for software control.
 - **PDN_UART:** Must be connected for UART mode (GPIO 16/17 on ESP32)
-- **VIO:** Can be connected to 5V if driver board requires it (check your board specs)
+- **VIO:** Can be connected to 3.3V if driver board requires it (most TMC2209 boards support 3.3V logic levels - check your board specs)
 
 ## Software Setup
 
@@ -159,7 +159,8 @@ stepperSerial.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
 2. Verify common ground between ESP32 and TMC2209
 3. Check motor coil connections (try swapping one coil pair)
 4. Verify ENABLE pin logic (some boards have inverted logic)
-5. Check Serial Monitor for error messages
+5. If your TMC2209 board has a VIO pin, connect it to ESP32 3.3V (not 5V)
+6. Check Serial Monitor for error messages
 
 ### Motor Runs Erratically
 
@@ -203,7 +204,7 @@ stepperSerial.begin(115200, SERIAL_8N1, RX_PIN, TX_PIN);
 - **ESP32:** Dual-core 240MHz, WiFi 802.11 b/g/n
 - **Stepper Driver:** TMC2209 SilentStepStick
 - **Motor:** NEMA 17, 1.8° step angle, 200 steps/revolution
-- **Power:** 12V for motor, 5V USB for ESP32
+- **Power:** 12V for motor, 5V USB for ESP32 (ESP32 uses 3.3V logic levels)
 - **Control Method:** UART-based TMC2209 configuration, step/dir control
 
 ## License
