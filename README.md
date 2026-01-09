@@ -17,13 +17,15 @@ A mobile-friendly web application for controlling a stepper motor-powered film a
 
 | ESP32 Pin | TMC2209 Pin | Description |
 |-----------|-------------|-------------|
-| GPIO 26   | STEP        | Step signal |
-| GPIO 25   | DIR         | Direction signal |
-| GPIO 33   | ENABLE      | Enable/Disable driver |
-| GPIO 16   | PDN_UART    | UART RX (for TMC2209 configuration) |
-| GPIO 17   | PDN_UART    | UART TX (for TMC2209 configuration) |
-| GND       | GND         | Common ground |
-| 3.3V      | VIO         | Logic power (3.3V - connect if your TMC2209 board requires external VIO) |
+| GPIO 26   | STEP        | Step signal (STEP pin on left side) |
+| GPIO 25   | DIR         | Direction signal (DIR pin on left side) |
+| GPIO 33   | ENABLE      | Enable/Disable driver (EN pin on left side) |
+| GPIO 32   | PDN_UART    | UART mode enable (PDN pin on left side - set LOW for UART mode) |
+| GPIO 4    | UART_RX2    | Serial2 RX (connects to PDN_UART pin for half-duplex, or separate RX if board has it) |
+| GPIO 2    | UART_TX2    | Serial2 TX (connects to PDN_UART pin for half-duplex, or separate TX if board has it) |
+|           |             | **Note:** If your board uses different Serial2 pins, update UART_RX_PIN and UART_TX_PIN in code |
+| GND       | GND         | Common ground (connect to GND on right side) |
+| 3.3V      | VDD         | Logic power (VDD pin on right side - 3.3V) |
 
 ### Power Connections
 

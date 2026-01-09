@@ -10,10 +10,13 @@ const char* ap_ssid = "FilmAgitator";
 const char* ap_password = "agitate123";
 
 // Motor and driver pins
-#define STEP_PIN 26        // Step pin for TMC2209
-#define DIR_PIN 25         // Direction pin for TMC2209
-#define ENABLE_PIN 33      // Enable pin for TMC2209
-#define SERIAL_PORT Serial2 // UART for TMC2209 (GPIO 16/17)
+#define STEP_PIN 26        // Step pin for TMC2209 (STEP on left side)
+#define DIR_PIN 25         // Direction pin for TMC2209 (DIR on left side)
+#define ENABLE_PIN 33      // Enable pin for TMC2209 (EN on left side)
+#define PDN_UART_PIN 32    // PDN_UART pin - set LOW to enable UART mode (optional, some boards auto-detect)
+// Serial2 pins for TMC2209 UART - adjust these to match your ESP32 board
+#define UART_RX_PIN 4      // RX2 pin (commonly GPIO 4 on ESP32 dev boards)
+#define UART_TX_PIN 2      // TX2 pin (commonly GPIO 2 on ESP32 dev boards)
 #define DRIVER_ADDRESS 0b00 // TMC2209 Driver address (0-3)
 
 // Motor parameters for NEMA 17
@@ -43,6 +46,12 @@ bool motorDirection = true; // true = forward, false = reverse
 unsigned long lastStepTime = 0;
 unsigned long stepInterval = 0;
 
+// Time control variables
+bool timeControlEnabled = false;
+unsigned long runDuration = 0; // Duration in milliseconds
+unsigned long startTime = 0;
+unsigned long elapsedTime = 0;
+
 // Function prototypes
 void handleRoot();
 void handleCSS();
@@ -53,7 +62,7 @@ void handleAPI();
 void setupMotor();
 void stepMotor();
 void stopMotor();
-void startMotor(float rpm);
+void startMotor(float rpm, unsigned long durationMs);
 bool connectToWiFi(String ssid, String password);
 void startAPMode();
 String getStatusJSON();
@@ -79,14 +88,16 @@ void setup() {
   preferences.end();
   
   // Initialize stepper driver UART
-  stepperSerial.begin(115200, SERIAL_8N1, 16, 17); // RX=GPIO16, TX=GPIO17
+  stepperSerial.begin(115200, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN); // RX2, TX2 pins
   delay(100);
   
   // Initialize motor pins
   pinMode(STEP_PIN, OUTPUT);
   pinMode(DIR_PIN, OUTPUT);
   pinMode(ENABLE_PIN, OUTPUT);
+  pinMode(PDN_UART_PIN, OUTPUT);
   digitalWrite(ENABLE_PIN, HIGH); // Disable driver initially
+  digitalWrite(PDN_UART_PIN, LOW); // Enable UART mode (LOW = UART enabled)
   
   // Setup motor driver
   setupMotor();
@@ -140,6 +151,16 @@ void loop() {
       stepMotor();
       lastStepTime = currentTime;
     }
+    
+    // Check time control
+    if (timeControlEnabled) {
+      elapsedTime = millis() - startTime;
+      if (elapsedTime >= runDuration) {
+        stopMotor();
+        timeControlEnabled = false;
+        Serial.println("Motor stopped - time limit reached");
+      }
+    }
   }
 }
 
@@ -189,7 +210,7 @@ void stepMotor() {
   digitalWrite(STEP_PIN, LOW);
 }
 
-void startMotor(float rpm) {
+void startMotor(float rpm, unsigned long durationMs = 0) {
   if (rpm <= 0 || rpm > MAX_RPM) {
     Serial.println("Invalid RPM");
     return;
@@ -205,13 +226,29 @@ void startMotor(float rpm) {
   float stepsPerSecond = (rpm / 60.0) * STEPS_PER_REV * MICROSTEPS;
   stepInterval = (unsigned long)(1000000.0 / stepsPerSecond);
   
+  // Setup time control
+  if (durationMs > 0) {
+    timeControlEnabled = true;
+    runDuration = durationMs;
+    startTime = millis();
+    elapsedTime = 0;
+  } else {
+    timeControlEnabled = false;
+  }
+  
   digitalWrite(ENABLE_PIN, LOW);
   delayMicroseconds(100);
   lastStepTime = micros();
   
   Serial.print("Motor started at ");
   Serial.print(rpm);
-  Serial.print(" RPM (");
+  Serial.print(" RPM");
+  if (timeControlEnabled) {
+    Serial.print(" for ");
+    Serial.print(runDuration / 1000);
+    Serial.print(" seconds");
+  }
+  Serial.print(" (");
   Serial.print(stepsPerSecond);
   Serial.println(" steps/sec)");
 }
@@ -220,6 +257,8 @@ void stopMotor() {
   motorRunning = false;
   currentRPM = 0.0;
   stepInterval = 0;
+  timeControlEnabled = false;
+  elapsedTime = 0;
   digitalWrite(ENABLE_PIN, HIGH);
   Serial.println("Motor stopped");
 }
@@ -235,23 +274,13 @@ void handleRoot() {
 }
 
 void handleCSS() {
-  File file = SPIFFS.open("/style.css", "r");
-  if (file) {
-    server.streamFile(file, "text/css");
-    file.close();
-    return;
-  }
-  server.send(200, "text/css", getEmbeddedCSS());
+  // CSS is now embedded in HTML, but keep this for compatibility
+  server.send(200, "text/css", "");
 }
 
 void handleJS() {
-  File file = SPIFFS.open("/script.js", "r");
-  if (file) {
-    server.streamFile(file, "application/javascript");
-    file.close();
-    return;
-  }
-  server.send(200, "application/javascript", getEmbeddedJS());
+  // JS is now embedded in HTML, but keep this for compatibility
+  server.send(200, "application/javascript", "");
 }
 
 void handleSetup() {
@@ -318,7 +347,11 @@ void handleAPI() {
       return;
     }
     float rpm = server.arg("rpm").toFloat();
-    startMotor(rpm);
+    unsigned long duration = 0;
+    if (server.hasArg("duration")) {
+      duration = server.arg("duration").toInt() * 1000; // Convert seconds to milliseconds
+    }
+    startMotor(rpm, duration);
     server.send(200, "application/json", getStatusJSON());
   }
   else if (action == "stop") {
@@ -348,7 +381,16 @@ String getStatusJSON() {
   json += "\"direction\":\"" + String(motorDirection ? "forward" : "reverse") + "\",";
   json += "\"maxRpm\":" + String(MAX_RPM) + ",";
   json += "\"wifiMode\":\"" + String(isAPMode ? "ap" : "station") + "\",";
-  json += "\"ip\":\"" + (isAPMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) + "\"";
+  json += "\"ip\":\"" + (isAPMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString()) + "\",";
+  json += "\"timeControl\":" + String(timeControlEnabled ? "true" : "false") + ",";
+  if (timeControlEnabled && motorRunning) {
+    unsigned long remaining = (runDuration > elapsedTime) ? (runDuration - elapsedTime) : 0;
+    json += "\"remainingTime\":" + String(remaining / 1000) + ",";
+    json += "\"elapsedTime\":" + String(elapsedTime / 1000);
+  } else {
+    json += "\"remainingTime\":0,";
+    json += "\"elapsedTime\":0";
+  }
   json += "}";
   return json;
 }
@@ -371,7 +413,9 @@ String getEmbeddedHTML() {
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Film Agitator Control</title>
-    <link rel="stylesheet" href="/style.css">
+    <style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;padding:20px;display:flex;justify-content:center;align-items:center}.container{width:100%;max-width:500px;background:white;border-radius:20px;padding:30px;box-shadow:0 20px 60px rgba(0,0,0,0.3)}h1{text-align:center;color:#333;margin-bottom:30px;font-size:28px;font-weight:700}.status-card{background:#f8f9fa;border-radius:15px;padding:20px;margin-bottom:25px}.status-item{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid #e9ecef}.status-item:last-child{border-bottom:none}.label{font-weight:600;color:#666;font-size:16px}.value{font-weight:700;color:#333;font-size:18px}.value.running{color:#28a745}.value.stopped{color:#dc3545}.control-card{background:#f8f9fa;border-radius:15px;padding:25px;margin-bottom:25px}.control-card label{display:block;font-weight:600;color:#333;margin-bottom:15px;font-size:16px}input[type="range"],input[type="number"]{width:100%;height:8px;border-radius:5px;background:#ddd;outline:none;-webkit-appearance:none;margin-bottom:15px}input[type="number"]{height:45px;padding:12px;border:2px solid #ddd;border-radius:8px;font-size:16px;text-align:center}input[type="number"]:focus{border-color:#667eea}input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:28px;height:28px;border-radius:50%;background:#667eea;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.2);transition:all 0.2s}input[type="range"]::-webkit-slider-thumb:active{transform:scale(1.1);background:#764ba2}input[type="range"]::-moz-range-thumb{width:28px;height:28px;border-radius:50%;background:#667eea;cursor:pointer;border:none;box-shadow:0 2px 6px rgba(0,0,0,0.2)}.rpm-display{text-align:center;font-size:32px;font-weight:700;color:#667eea;margin-top:10px}.time-display{text-align:center;font-size:24px;font-weight:700;color:#667eea;margin-top:10px}.direction-buttons{display:flex;gap:15px;margin-bottom:25px}.dir-btn{flex:1;padding:15px 20px;font-size:18px;font-weight:600;border:2px solid #ddd;border-radius:12px;background:white;color:#666;cursor:pointer;transition:all 0.2s;touch-action:manipulation}.dir-btn:active{transform:scale(0.98)}.dir-btn.active{background:#667eea;color:white;border-color:#667eea}.control-buttons{display:flex;gap:15px;margin-bottom:20px}.btn{flex:1;padding:18px 25px;font-size:20px;font-weight:700;border:none;border-radius:12px;cursor:pointer;transition:all 0.2s;touch-action:manipulation;text-transform:uppercase;letter-spacing:1px}.btn:active{transform:scale(0.98)}.btn-start{background:linear-gradient(135deg,#28a745,#20c997);color:white;box-shadow:0 4px 15px rgba(40,167,69,0.4)}.btn-start:active{box-shadow:0 2px 8px rgba(40,167,69,0.3)}.btn-stop{background:linear-gradient(135deg,#dc3545,#c82333);color:white;box-shadow:0 4px 15px rgba(220,53,69,0.4)}.btn-stop:active{box-shadow:0 2px 8px rgba(220,53,69,0.3)}.info-text{text-align:center;font-size:14px;color:#666;line-height:1.6;padding-top:15px;border-top:1px solid #e9ecef}.time-toggle{display:flex;align-items:center;gap:10px;margin-bottom:15px}.time-toggle input[type="checkbox"]{width:24px;height:24px;cursor:pointer}@media (max-width:480px){.container{padding:20px;border-radius:15px}h1{font-size:24px;margin-bottom:20px}.rpm-display{font-size:28px}.btn{padding:16px 20px;font-size:18px}}
+    </style>
 </head>
 <body>
     <div class="container">
@@ -389,6 +433,10 @@ String getEmbeddedHTML() {
                 <span class="label">Direction:</span>
                 <span id="direction" class="value">Forward</span>
             </div>
+            <div class="status-item" id="timeStatus" style="display:none">
+                <span class="label">Time Remaining:</span>
+                <span id="timeRemaining" class="value">-</span>
+            </div>
             <div class="status-item">
                 <span class="label">WiFi:</span>
                 <span id="wifiInfo" class="value">-</span>
@@ -399,6 +447,19 @@ String getEmbeddedHTML() {
             <input type="range" id="rpmSlider" min="10" max="300" value="60" step="10">
             <div class="rpm-display">
                 <span id="rpmValue">60</span> RPM
+            </div>
+        </div>
+        <div class="control-card">
+            <div class="time-toggle">
+                <input type="checkbox" id="timeControlCheck">
+                <label for="timeControlCheck" style="margin:0;cursor:pointer">Enable Time Control</label>
+            </div>
+            <div id="timeControlGroup" style="display:none">
+                <label for="durationInput">Duration (seconds)</label>
+                <input type="number" id="durationInput" min="1" max="86400" value="300" placeholder="Enter duration">
+            </div>
+            <div class="time-display" id="timeDisplay" style="display:none">
+                <span id="timeValue">0</span>s remaining
             </div>
         </div>
         <div class="direction-buttons">
@@ -413,7 +474,157 @@ String getEmbeddedHTML() {
             <a href="/setup" style="color: #667eea; text-decoration: none;">⚙️ WiFi Settings</a>
         </div>
     </div>
-    <script src="/script.js"></script>
+    <script>
+const API_BASE='/api';
+const statusEl=document.getElementById('status');
+const rpmEl=document.getElementById('rpm');
+const directionEl=document.getElementById('direction');
+const wifiInfoEl=document.getElementById('wifiInfo');
+const timeStatusEl=document.getElementById('timeStatus');
+const timeRemainingEl=document.getElementById('timeRemaining');
+const timeDisplayEl=document.getElementById('timeDisplay');
+const timeValueEl=document.getElementById('timeValue');
+const rpmSlider=document.getElementById('rpmSlider');
+const rpmValue=document.getElementById('rpmValue');
+const dirForwardBtn=document.getElementById('dirForward');
+const dirReverseBtn=document.getElementById('dirReverse');
+const startBtn=document.getElementById('startBtn');
+const stopBtn=document.getElementById('stopBtn');
+const timeControlCheck=document.getElementById('timeControlCheck');
+const timeControlGroup=document.getElementById('timeControlGroup');
+const durationInput=document.getElementById('durationInput');
+let currentRPM=60;
+let isRunning=false;
+let direction='forward';
+let statusCheckInterval=null;
+document.addEventListener('DOMContentLoaded',()=>{
+    rpmSlider.addEventListener('input',(e)=>{currentRPM=parseInt(e.target.value);rpmValue.textContent=currentRPM});
+    timeControlCheck.addEventListener('change',(e)=>{timeControlGroup.style.display=e.target.checked?'block':'none'});
+    dirForwardBtn.addEventListener('click',()=>{setDirection('forward')});
+    dirReverseBtn.addEventListener('click',()=>{setDirection('reverse')});
+    startBtn.addEventListener('click',()=>{startMotor(currentRPM)});
+    stopBtn.addEventListener('click',()=>{stopMotor()});
+    startStatusPolling();
+    updateStatus();
+});
+async function updateStatus(){
+    try{
+        const response=await fetch(`${API_BASE}`);
+        const data=await response.json();
+        isRunning=data.running;
+        direction=data.direction;
+        statusEl.textContent=isRunning?'Running':'Stopped';
+        statusEl.className=`value ${isRunning?'running':'stopped'}`;
+        rpmEl.textContent=Math.round(data.rpm);
+        directionEl.textContent=data.direction.charAt(0).toUpperCase()+data.direction.slice(1);
+        if(data.wifiMode)wifiInfoEl.textContent=data.wifiMode==='ap'?'AP Mode':data.ip||'Connected';
+        if(data.timeControl&&data.remainingTime>0){
+            timeStatusEl.style.display='flex';
+            timeDisplayEl.style.display='block';
+            const mins=Math.floor(data.remainingTime/60);
+            const secs=data.remainingTime%60;
+            timeRemainingEl.textContent=mins>0?`${mins}m ${secs}s`:`${secs}s`;
+            timeValueEl.textContent=data.remainingTime;
+        }else{
+            timeStatusEl.style.display='none';
+            timeDisplayEl.style.display='none';
+        }
+        if(direction==='forward'){
+            dirForwardBtn.classList.add('active');
+            dirReverseBtn.classList.remove('active');
+        }else{
+            dirForwardBtn.classList.remove('active');
+            dirReverseBtn.classList.add('active');
+        }
+        if(isRunning&&data.rpm>0){
+            currentRPM=data.rpm;
+            rpmSlider.value=currentRPM;
+            rpmValue.textContent=Math.round(currentRPM);
+        }
+    }catch(error){
+        console.error('Error updating status:',error);
+        statusEl.textContent='Error';
+        statusEl.className='value stopped';
+    }
+}
+async function startMotor(rpm){
+    try{
+        const formData=new URLSearchParams();
+        formData.append('action','start');
+        formData.append('rpm',rpm.toString());
+        if(timeControlCheck.checked&&durationInput.value){
+            formData.append('duration',durationInput.value);
+        }
+        const response=await fetch(`${API_BASE}`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:formData.toString()});
+        if(response.ok){
+            const data=await response.json();
+            updateUIFromResponse(data);
+            console.log('Motor started at',rpm,'RPM');
+        }else{
+            console.error('Failed to start motor');
+            alert('Failed to start motor. Please try again.');
+        }
+    }catch(error){
+        console.error('Error starting motor:',error);
+        alert('Error starting motor. Check connection.');
+    }
+}
+async function stopMotor(){
+    try{
+        const formData=new URLSearchParams();
+        formData.append('action','stop');
+        const response=await fetch(`${API_BASE}`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:formData.toString()});
+        if(response.ok){
+            const data=await response.json();
+            updateUIFromResponse(data);
+            console.log('Motor stopped');
+        }else{
+            console.error('Failed to stop motor');
+            alert('Failed to stop motor. Please try again.');
+        }
+    }catch(error){
+        console.error('Error stopping motor:',error);
+        alert('Error stopping motor. Check connection.');
+    }
+}
+async function setDirection(dir){
+    try{
+        const formData=new URLSearchParams();
+        formData.append('action','direction');
+        formData.append('dir',dir);
+        const response=await fetch(`${API_BASE}`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:formData.toString()});
+        if(response.ok){
+            const data=await response.json();
+            updateUIFromResponse(data);
+            console.log('Direction set to',dir);
+        }else{
+            console.error('Failed to set direction');
+        }
+    }catch(error){
+        console.error('Error setting direction:',error);
+    }
+}
+function updateUIFromResponse(data){
+    isRunning=data.running;
+    direction=data.direction;
+    statusEl.textContent=isRunning?'Running':'Stopped';
+    statusEl.className=`value ${isRunning?'running':'stopped'}`;
+    rpmEl.textContent=Math.round(data.rpm);
+    directionEl.textContent=data.direction.charAt(0).toUpperCase()+data.direction.slice(1);
+    if(data.wifiMode)wifiInfoEl.textContent=data.wifiMode==='ap'?'AP Mode':data.ip||'Connected';
+    if(direction==='forward'){
+        dirForwardBtn.classList.add('active');
+        dirReverseBtn.classList.remove('active');
+    }else{
+        dirForwardBtn.classList.remove('active');
+        dirReverseBtn.classList.add('active');
+    }
+}
+function startStatusPolling(){
+    statusCheckInterval=setInterval(updateStatus,500);
+}
+window.addEventListener('beforeunload',(e)=>{if(isRunning){e.preventDefault();e.returnValue=''}});
+    </script>
 </body>
 </html>)";
 }
