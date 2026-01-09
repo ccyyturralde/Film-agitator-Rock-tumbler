@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Film Agitator Control</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 Film Agitator</h1>
+        
+        <div class="status-card">
+            <div class="status-item">
+                <span class="label">Status:</span>
+                <span id="status" class="value stopped">Stopped</span>
+            </div>
+            <div class="status-item">
+                <span class="label">RPM:</span>
+                <span id="rpm" class="value">0</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Direction:</span>
+                <span id="direction" class="value">Forward</span>
+            </div>
+        </div>
+        
+        <div class="control-card">
+            <label for="rpmSlider">Speed (RPM)</label>
+            <input type="range" id="rpmSlider" min="10" max="300" value="60" step="10">
+            <div class="rpm-display">
+                <span id="rpmValue">60</span> RPM
+            </div>
+        </div>
+        
+        <div class="direction-buttons">
+            <button id="dirForward" class="dir-btn active">Forward</button>
+            <button id="dirReverse" class="dir-btn">Reverse</button>
+        </div>
+        
+        <div class="control-buttons">
+            <button id="startBtn" class="btn btn-start">▶ Start</button>
+            <button id="stopBtn" class="btn btn-stop">■ Stop</button>
+        </div>
+        
+        <div class="info-text">
+            Connect to WiFi: <strong>FilmAgitator</strong><br>
+            Password: <strong>agitate123</strong>
+        </div>
+    </div>
+    <script src="/script.js"></script>
+</body>
+</html>
